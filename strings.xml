@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Password</string>
+    <string name="hint_user_email_address">User Email Address</string>
+    <string name="hint_user_login_id">User Login ID</string>
+    <string name="hint_current_password">Current Password</string>
+    <string name="hint_new_password">New Password</string>
+    <string name="hint_confirm_password">Confirm New Password</string>
+    <string name="btn_change_password">Change Password</string>
+</resources>
