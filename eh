@@ -1,43 +1,129 @@
-To retrieve the serial 
+
 import 'package:flutter/material.dart';
 import 'package:nfc_manager/nfc_manager.dart';
+import 'record_infos.dart';
 import 'dart:typed_data';
 
-void main() => runApp(MyApp());
-
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: NfcReadScreen(),
-    );
+extension IntExtension on int {
+  String toHexString() {
+    return '0x' + toRadixString(16).padLeft(2, '0').toUpperCase();
   }
 }
 
-class NfcReadScreen extends StatefulWidget {
-  @override
-  _NfcReadScreenState createState() => _NfcReadScreenState();
+extension Uint8ListExtension on Uint8List {
+  String toHexString({String empty = '-', String separator = ' '}) {
+    return isEmpty ? empty : map((e) => e.toHexString()).join(separator);
+  }
 }
 
-class _NfcReadScreenState extends State<NfcReadScreen> {
-  String _serialNumber = 'Tap an NFC tag';
+class NdefRecordInfo {
+  const NdefRecordInfo(
+      {required this.record, required this.title, required this.subtitle});
+
+  final Record record;
+
+  final String title;
+
+  final String subtitle;
+
+  static NdefRecordInfo fromNdef(NdefRecord record) {
+    final _record = Record.fromNdef(record);
+    if (_record is WellknownTextRecord)
+      return NdefRecordInfo(
+        record: _record,
+        title: 'Wellknown Text',
+        subtitle: '(${_record.languageCode}) ${_record.text}',
+      );
+    if (_record is WellknownUriRecord)
+      return NdefRecordInfo(
+        record: _record,
+        title: 'Wellknown Uri',
+        subtitle: '${_record.uri}',
+      );
+    if (_record is MimeRecord)
+      return NdefRecordInfo(
+        record: _record,
+        title: 'Mime',
+        subtitle: '(${_record.type}) ${_record.dataString}',
+      );
+    if (_record is AbsoluteUriRecord)
+      return NdefRecordInfo(
+        record: _record,
+        title: 'Absolute Uri',
+        subtitle: '(${_record.uriType}) ${_record.payloadString}',
+      );
+    if (_record is ExternalRecord)
+      return NdefRecordInfo(
+        record: _record,
+        title: 'External',
+        subtitle: '(${_record.domainType}) ${_record.dataString}',
+      );
+    if (_record is UnsupportedRecord) {
+      // more custom info from NdefRecord.
+      if (record.typeNameFormat == NdefTypeNameFormat.empty)
+        return NdefRecordInfo(
+          record: _record,
+          title: _typeNameFormatToString(_record.record.typeNameFormat),
+          subtitle: '-',
+        );
+      return NdefRecordInfo(
+        record: _record,
+        title: _typeNameFormatToString(_record.record.typeNameFormat),
+        subtitle:
+            '(${_record.record.type.toHexString()}) ${_record.record.payload.toHexString()}',
+      );
+    }
+    throw UnimplementedError();
+  }
+}
+
+String _typeNameFormatToString(NdefTypeNameFormat format) {
+  switch (format) {
+    case NdefTypeNameFormat.empty:
+      return 'Empty';
+    case NdefTypeNameFormat.nfcWellknown:
+      return 'NFC Wellknown';
+    case NdefTypeNameFormat.media:
+      return 'Media';
+    case NdefTypeNameFormat.absoluteUri:
+      return 'Absolute Uri';
+    case NdefTypeNameFormat.nfcExternal:
+      return 'NFC External';
+    case NdefTypeNameFormat.unknown:
+      return 'Unknown';
+    case NdefTypeNameFormat.unchanged:
+      return 'Unchanged';
+  }
+}
+
+class NfcSerialNumberRetriever extends StatefulWidget {
+  @override
+  _NfcSerialNumberRetrieverState createState() =>
+      _NfcSerialNumberRetrieverState();
+}
+
+class _NfcSerialNumberRetrieverState extends State<NfcSerialNumberRetriever> {
+  String? serialNumber;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('NFC Serial Number')),
+      appBar: AppBar(
+        title: Text('NFC Serial Number Retriever'),
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              _serialNumber,
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              serialNumber != null
+                  ? 'Serial Number: $serialNumber'
+                  : 'Scan an NFC tag to retrieve the serial number',
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 20),
             ElevatedButton(
-              onPressed: _startNfcSession,
+              onPressed: _startNfcScan,
               child: Text('Scan NFC Tag'),
             ),
           ],
@@ -46,76 +132,49 @@ class _NfcReadScreenState extends State<NfcReadScreen> {
     );
   }
 
-  void _startNfcSession() async {
-    if (!await NfcManager.instance.isAvailable()) {
-      setState(() {
-        _serialNumber = 'NFC is not available on this device.';
-      });
-      return;
-    }
-
-    NfcManager.instance.startSession(onDiscovered: (NfcTag tag) async {
-      try {
-        // Extract the UID (serial number) of the NFC tag
-        Uint8List? id = tag.data['ndef']?['identifier'] ?? tag.data['id'];
-        if (id != null) {
-          setState(() {
-            _serialNumber = id.map((e) => e.toRadixString(16).padLeft(2, '0')).join(':').toUpperCase();
-          });
-        } else {
-          setState(() {
-            _serialNumber = 'Failed to retrieve the serial number.';
-          });
-        }
-      } catch (e) {
+  Future<void> _startNfcScan() async {
+    try {
+      bool isAvailable = await NfcManager.instance.isAvailable();
+      if (!isAvailable) {
         setState(() {
-          _serialNumber = 'Error: $e';
+          serialNumber = 'NFC is not available on this device';
         });
-      } finally {
-        NfcManager.instance.stopSession();
+        return;
       }
-    });
+
+      NfcManager.instance.startSession(onDiscovered: (NfcTag tag) async {
+        try {
+          // Retrieve the identifier (serial number) from the NFC tag
+          final identifier = tag.data['nfca']['identifier'] as Uint8List?;
+          if (identifier != null) {
+            setState(() {
+              serialNumber = identifier.toHexString(separator: ':');
+            });
+          } else {
+            setState(() {
+              serialNumber = 'Serial number not found';
+            });
+          }
+        } catch (e) {
+          setState(() {
+            serialNumber = 'Error retrieving serial number: $e';
+          });
+        } finally {
+          NfcManager.instance.stopSession();
+        }
+      });
+    } catch (e) {
+      setState(() {
+        serialNumber = 'Error: $e';
+      });
+    }
   }
 }
 
-Key Points:
+void main() {
+  runApp(MaterialApp(
+    home: NfcSerialNumberRetriever(),
+  ));
+}
 
-1. NFC Tag Serial Number (UID):
-
-The tag's unique identifier (UID) is often stored in the id field or inside the ndef data of the NfcTag.
-
-
-
-2. Reading the UID:
-
-The UID is extracted as a Uint8List, and it is converted to a hexadecimal string for readability.
-
-
-
-3. Error Handling:
-
-The code includes checks to ensure NFC is available and gracefully handles errors during the session.
-
-
-
-4. UI:
-
-The app shows the serial number in the UI and allows rescanning with a button.
-
-
-
-
-Steps to Test:
-
-1. Add the nfc_manager dependency in your pubspec.yaml.
-
-
-2. Ensure NFC is enabled on your device.
-
-
-3. Tap an NFC tag, and the app should display its serial number.
-
-
-
-This implementation covers reading and displaying the NFC tag's serial number effectively.
 
